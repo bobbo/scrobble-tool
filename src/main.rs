@@ -52,7 +52,9 @@ struct Opts {
     album: Option<String>,
 
     username: Option<String>,
-    password: Option<String>
+    password: Option<String>,
+
+    dry_run: bool
 }
 
 impl Opts {
@@ -65,6 +67,7 @@ impl Opts {
         opt_config.optopt("", "track", "The track name", "TRACK");
         opt_config.optopt("", "album", "The album name", "ALBUM");
         opt_config.optopt("t", "type", "Sets scrobble type to track or album (defaults to single track)", "TYPE");
+        opt_config.optflag("", "dry-run", "Dry run (stop before actually scrobbling)");
 
         let args: Vec<String> = env::args().collect();
         let matches = match opt_config.parse(&args[1..]) {
@@ -92,7 +95,9 @@ impl Opts {
             album: matches.opt_str("album"),
 
             username: matches.opt_str("username"),
-            password: matches.opt_str("password")
+            password: matches.opt_str("password"),
+
+            dry_run: matches.opt_present("dry-run")
         })
     }
 
@@ -131,20 +136,23 @@ fn main() {
 
     let mut scrobbler = Scrobbler::new(API_KEY.to_string(), API_SECRET.to_string());
     match scrobbler.authenticate(opts.username.unwrap(), opts.password.unwrap()) {
-        Ok(_) => {
+        Ok(session) => {
             debug!("Authenticated with Last.fm");
+            info!("Session key: {}", session.key);
         },
         Err(err) => {
             panic!("Failed to authenticate with Last.fm: {}", err);
         }
     }
 
-    match scrobbler.scrobble_batch(scrobbles) {
-        Ok(_) => {
-            println!("Done!");
-        },
-        Err(err) => {
-            error!("Scrobbling failed: {:?}", err);
+    if !opts.dry_run {
+        match scrobbler.scrobble_batch(scrobbles) {
+            Ok(_) => {
+                println!("Done!");
+            },
+            Err(err) => {
+                error!("Scrobbling failed: {:?}", err);
+            }
         }
     }
 }
