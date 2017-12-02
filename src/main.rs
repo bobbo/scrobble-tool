@@ -1,5 +1,6 @@
 #[macro_use]
 extern crate bitflags;
+extern crate discogs;
 extern crate getopts;
 extern crate rustfm_scrobble;
 
@@ -8,6 +9,7 @@ extern crate env_logger;
 
 use std::env;
 
+use discogs::Discogs;
 use getopts::Options;
 use rustfm_scrobble::{Scrobbler, Scrobble, ScrobbleBatch};
 
@@ -22,6 +24,7 @@ const API_KEY:&'static str = "65eeafc3adfdb1c1dbad47332014ccbc";
 const API_SECRET:&'static str = "799127ee2d8a5a7099bff73bbc7b9a8e";
 
 trait InfoSource {
+    fn init(&self) -> Result<(), String>;
     fn get_capabilities(&self) -> ScrobbleType;
     fn get_metadata(&self, opts: &Opts) -> Result<ScrobbleBatch, String>;
 }
@@ -29,6 +32,38 @@ trait InfoSource {
 struct OptsInfoSource {}
 
 impl InfoSource for OptsInfoSource {
+
+    fn init(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn get_capabilities(&self) -> ScrobbleType {
+        ScrobbleType::TRACK
+    }
+
+    fn get_metadata(&self, opts: &Opts) -> Result<ScrobbleBatch, String> {
+        let track = opts.track.clone().ok_or("Track name must be set")?;
+        let artist = opts.artist.clone().ok_or("Artist name must be set")?;
+        let album = opts.album.clone().ok_or("Album name must be set")?;
+
+        Ok(ScrobbleBatch::from(vec!(Scrobble::new(artist, track, album))))
+    }
+
+}
+
+struct DiscogsInfoSource {
+    discogs: Option<Discogs>
+}
+
+impl InfoSource for DiscogsInfoSource {
+
+    fn init(&self) -> Result<(), String> {
+        let source = DiscogsInfoSource {
+            discogs: Some(Discogs::new("ScrobbleTool/0.1"))
+        };
+
+        Ok(())
+    }
 
     fn get_capabilities(&self) -> ScrobbleType {
         ScrobbleType::TRACK
@@ -51,6 +86,8 @@ struct Opts {
     track: Option<String>,
     album: Option<String>,
 
+    discogs_id: Option<String>,
+
     username: Option<String>,
     password: Option<String>,
 
@@ -66,6 +103,7 @@ impl Opts {
         opt_config.optopt("", "artist", "The artist name", "ARTIST");
         opt_config.optopt("", "track", "The track name", "TRACK");
         opt_config.optopt("", "album", "The album name", "ALBUM");
+        opt_config.optopt("", "discogs-id", "Discogs ID of release", "DISCOGS_ID");
         opt_config.optopt("t", "type", "Sets scrobble type to track or album (defaults to single track)", "TYPE");
         opt_config.optflag("", "dry-run", "Dry run (stop before actually scrobbling)");
 
@@ -94,6 +132,8 @@ impl Opts {
             track: matches.opt_str("track"),
             album: matches.opt_str("album"),
 
+            discogs_id: matches.opt_str("discogs-id"),
+
             username: matches.opt_str("username"),
             password: matches.opt_str("password"),
 
@@ -117,7 +157,12 @@ fn main() {
         }
     }
 
-    let info_source: &InfoSource = &OptsInfoSource{};
+    let info_source: &InfoSource = if let Some(_) = opts.discogs_id {
+        &DiscogsInfoSource{discogs: None}
+    } else {
+        &OptsInfoSource{}
+    };
+
     if !info_source.get_capabilities().intersects(opts.scrobble_type) {
         panic!("Info source does not support requested scrobble type {:?}", opts.scrobble_type);
     }
@@ -129,13 +174,10 @@ fn main() {
         }
     };
 
-    // TODO: Tidy when ScrobbleBatch impls Debug
-    for scrobble in scrobbles.iter() {
-        info!("Got scrobble: {:?}", scrobble);
-    }
+    info!("Got scrobbles: {:?}", scrobbles);
 
     let mut scrobbler = Scrobbler::new(API_KEY.to_string(), API_SECRET.to_string());
-    match scrobbler.authenticate(opts.username.unwrap(), opts.password.unwrap()) {
+    match scrobbler.authenticate_with_password(opts.username.unwrap(), opts.password.unwrap()) {
         Ok(session) => {
             debug!("Authenticated with Last.fm");
             info!("Session key: {}", session.key);
